@@ -1,6 +1,4 @@
-# Playwright base image ships Chromium + all required OS libs.
-# Pin to a version compatible with the Playwright npm dep in package.json (^1.40).
-FROM mcr.microsoft.com/playwright:v1.58.2-jammy AS build
+FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -13,7 +11,7 @@ RUN npm run build
 # Drop dev deps for the runtime image.
 RUN npm prune --omit=dev
 
-FROM mcr.microsoft.com/playwright:v1.58.2-jammy
+FROM node:22-bookworm-slim
 WORKDIR /app
 
 ENV NODE_ENV=production

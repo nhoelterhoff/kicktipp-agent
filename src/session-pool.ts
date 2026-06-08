@@ -1,10 +1,7 @@
 import { createHash } from 'crypto';
-import { Browser, BrowserContext, Page } from 'playwright';
-import { launchBrowser } from './browser.js';
+import { Page, launchBrowser } from './browser.js';
 
 interface Entry {
-  browser: Browser;
-  context: BrowserContext;
   page: Page;
   lastUsed: number;
   inFlight: Promise<Page> | null;
@@ -12,10 +9,10 @@ interface Entry {
 
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 1000;
-// Hard cap on concurrent cached sessions. Each Chromium context is ~150 MB;
-// the 1 GB Fly VM realistically tops out around 5. Override via env if you
-// resize the machine.
-const MAX_SESSIONS = Number(process.env.MCP_MAX_SESSIONS || 4);
+// Hard cap on concurrent cached sessions. HTTP sessions are tiny, but keep a
+// bound so long-running HTTP deployments cannot
+// grow forever under many distinct users.
+const MAX_SESSIONS = Number(process.env.MCP_MAX_SESSIONS || 64);
 
 const pool = new Map<string, Entry>();
 
@@ -61,12 +58,7 @@ async function evict(key: string): Promise<void> {
   const entry = pool.get(key);
   if (!entry) return;
   pool.delete(key);
-  try {
-    await entry.context.close();
-  } catch { /* ignore */ }
-  try {
-    await entry.browser.close();
-  } catch { /* ignore */ }
+  try { await entry.page.close(); } catch { /* ignore */ }
 }
 
 export async function getSessionPage(email: string, password: string): Promise<Page> {
@@ -93,8 +85,6 @@ export async function getSessionPage(email: string, password: string): Promise<P
     rejectLaunch = reject;
   });
   const placeholder: Entry = {
-    browser: null as unknown as Browser,
-    context: null as unknown as BrowserContext,
     page: null as unknown as Page,
     lastUsed: Date.now(),
     inFlight: launchPromise,
@@ -103,8 +93,8 @@ export async function getSessionPage(email: string, password: string): Promise<P
 
   await enforceCapacity();
 
-  launchBrowser({ email, password, sessionFile: null }).then(({ browser, context, page }) => {
-    const entry: Entry = { browser, context, page, lastUsed: Date.now(), inFlight: null };
+  launchBrowser({ email, password, sessionFile: null }).then(({ page }) => {
+    const entry: Entry = { page, lastUsed: Date.now(), inFlight: null };
     pool.set(key, entry);
     resolveLaunch(page);
   }, rejectLaunch);

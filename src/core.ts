@@ -1,7 +1,16 @@
-import { Page } from 'playwright';
 import * as cheerio from 'cheerio';
-import { dismissConsent, parseOdds, getCommunities, getPlayers } from './browser.js';
-import { getPredictUrl, getLeaderboardUrl, URL_BASE } from './url.js';
+import { Page, dismissConsent, parseOdds, getCommunities, getPlayers } from './browser.js';
+import {
+  getAdminMembersUrl,
+  getAdminTipsUrl,
+  getBonusPredictUrl,
+  getLeaderboardUrl,
+  getOverviewUrl,
+  getPredictUrl,
+  getRulesUrl,
+  getScheduleUrl,
+  getTableUrl,
+} from './url.js';
 import { loadCommunity, loadPlayer } from './config.js';
 import {
   parseBetArg,
@@ -21,14 +30,17 @@ async function loadPage(page: Page, url: string): Promise<cheerio.CheerioAPI> {
   // Kicktipp redirects to /login when the session is invalid. Surface this
   // as an explicit error so callers don't silently get empty parse results.
   const finalUrl = page.url();
+  if (/\/profil\/login\?spielleiter=1/i.test(finalUrl)) {
+    throw new Error(`Kicktipp Spielleiter access required for ${url}. The logged-in user is not an admin of this community.`);
+  }
   if (/\/(login|profile\/login|profil\/login)(\?|$|\/)/i.test(finalUrl)) {
     throw new Error(`Kicktipp session is not authenticated (redirected to ${finalUrl}). Verify credentials.`);
   }
   const html = await page.content();
   // Some stale-session requests get a 200 "Seite wurde nicht gefunden" page
   // instead of a /login redirect — treat that as auth-lost too so the retry
-  // wrapper can evict the cached browser and try a fresh login.
-  if (/Seite\s+wurde\s+nicht\s+gefunden/i.test(html)) {
+  // wrapper can evict the cached HTTP session and try a fresh login.
+  if (page.status() === 404 || /Seite\s+wurde\s+nicht\s+gefunden|Page\s+not\s+found/i.test(html)) {
     throw new Error(`Kicktipp session is not authenticated (page not found at ${finalUrl}). Verify credentials.`);
   }
   return cheerio.load(html);
@@ -172,6 +184,12 @@ export interface PlacedBonusBet {
   answer: string;
 }
 
+interface ResolvedMember {
+  tipperId: string;
+  tippsaisonId: string;
+  name?: string;
+}
+
 // ── Data functions ─────────────────────────────────────────────────
 
 export async function fetchTodayMatches(page: Page, community: string): Promise<{ title: string; matches: TodayMatch[] }> {
@@ -262,12 +280,7 @@ export async function fetchBets(page: Page, community: string, matchday?: number
 }
 
 export async function fetchSchedule(page: Page, community: string, matchday?: number): Promise<{ title: string; matches: ScheduleMatch[] }> {
-  let url = `${URL_BASE}/${encodeURIComponent(community)}/spielplan`;
-  if (matchday !== undefined) {
-    if (matchday < 1 || matchday > 34) throw new RangeError(`Matchday '${matchday}' is not valid, use 1-34.`);
-    url += `?spieltagIndex=${matchday}`;
-  }
-  const $ = await loadPage(page, url);
+  const $ = await loadPage(page, getScheduleUrl(community, matchday));
   const content = $('#kicktipp-content');
   const title = content.find('div.pagetitle').text().trim();
   const table = content.find('table#spiele');
@@ -381,7 +394,7 @@ export async function fetchOverview(page: Page, community: string, view = 'match
     throw new Error(`Unknown view '${view}'. Options: ${OVERVIEW_VIEW_OPTIONS.join(', ')}`);
   }
   const [ansicht, label] = OVERVIEW_VIEWS[view];
-  const $ = await loadPage(page, `${URL_BASE}/${encodeURIComponent(community)}/gesamtuebersicht?ansicht=${ansicht}`);
+  const $ = await loadPage(page, getOverviewUrl(community, ansicht));
   const content = $('#kicktipp-content');
   const savedPlayer = loadPlayer();
 
@@ -422,12 +435,11 @@ export async function fetchOverview(page: Page, community: string, view = 'match
 }
 
 export async function fetchTable(page: Page, community: string, option?: 'home' | 'away'): Promise<{ label: string; teams: TableTeam[] }> {
-  let url = `${URL_BASE}/${encodeURIComponent(community)}/tabellen`;
   let label = 'League Table';
-  if (option === 'home') { url += '?option=heim'; label = 'League Table (Home)'; }
-  else if (option === 'away') { url += '?option=gast'; label = 'League Table (Away)'; }
+  if (option === 'home') { label = 'League Table (Home)'; }
+  else if (option === 'away') { label = 'League Table (Away)'; }
 
-  const $ = await loadPage(page, url);
+  const $ = await loadPage(page, getTableUrl(community, option));
   const content = $('#kicktipp-content');
   const table = content.find('table').first();
   if (!table.length) return { label, teams: [] };
@@ -456,7 +468,7 @@ export async function fetchTable(page: Page, community: string, option?: 'home' 
 }
 
 export async function fetchRules(page: Page, community: string): Promise<RulesSection[]> {
-  const $ = await loadPage(page, `${URL_BASE}/${encodeURIComponent(community)}/spielregeln`);
+  const $ = await loadPage(page, getRulesUrl(community));
   const pagecontent = $('#kicktipp-content div.pagecontent');
   if (!pagecontent.length) return [];
 
@@ -577,17 +589,18 @@ export interface MemberDetail extends MemberEntry {
 }
 
 export async function fetchMembers(page: Page, community: string): Promise<MemberDetail[]> {
-  const $ = await loadPage(page, `${URL_BASE}/${encodeURIComponent(community)}/spielleiter/mitgliederliste`);
+  const $ = await loadPage(page, getAdminMembersUrl(community));
   // Each row carries: data-url="mitgliedsdatenanzeigen?tipperId=X&tippsaisonId=Y"
   // Columns: col0=#, col1=name, col2=email ("-" for Dummy), col3=joined date, col4=points
   const members: MemberDetail[] = [];
-  $('tr.datarow[data-url*="tipperId="]').each((_, tr) => {
+  $('tr[data-url*="tipperId="]').each((_, tr) => {
     const dataUrl = $(tr).attr('data-url') || '';
     const tipperMatch = dataUrl.match(/tipperId=(\d+)/);
     const saisonMatch = dataUrl.match(/tippsaisonId=(\d+)/);
     if (!tipperMatch || !saisonMatch) return;
-    const name = $(tr).find('td.col1').text().trim();
-    const email = $(tr).find('td.col2').text().trim();
+    const cols = $(tr).children('td');
+    const name = ($(tr).find('td.col1').text() || $(cols[1]).text()).trim();
+    const email = ($(tr).find('td.col2').text() || $(cols[2]).text()).trim();
     if (!name) return;
     members.push({
       name,
@@ -607,6 +620,33 @@ async function discoverSaisonId(page: Page, community: string): Promise<string> 
   throw new Error('Could not discover tippsaisonId — member list is empty or unparseable.');
 }
 
+async function resolveMember(page: Page, community: string, tipperIdOrName: string): Promise<ResolvedMember> {
+  if (/^\d+$/.test(tipperIdOrName)) {
+    return {
+      tipperId: tipperIdOrName,
+      tippsaisonId: await discoverSaisonId(page, community),
+    };
+  }
+
+  const members = await fetchMembers(page, community);
+  const match = members.find((m) => m.name.toLowerCase() === tipperIdOrName.toLowerCase());
+  if (!match) throw new Error(`Member "${tipperIdOrName}" not found. Use list_members to see available names.`);
+  return {
+    tipperId: match.tipperId,
+    tippsaisonId: match.tippsaisonId,
+    name: match.name,
+  };
+}
+
+function getTipsNachtragenUrl(
+  community: string,
+  member: ResolvedMember,
+  matchday?: number,
+  bonus = false,
+): string {
+  return getAdminTipsUrl(community, member.tipperId, member.tippsaisonId, matchday, bonus);
+}
+
 export async function placeBetsForMember(
   page: Page,
   community: string,
@@ -615,23 +655,8 @@ export async function placeBetsForMember(
   matchday?: number,
   submit = true,
 ): Promise<PlacedBet[]> {
-  // Accept either a numeric tipperId or a human name; resolve names via
-  // the member list so the caller doesn't have to look up the ID first.
-  let tipperId = tipperIdOrName;
-  let tippsaisonId: string | undefined;
-  if (!/^\d+$/.test(tipperId)) {
-    const members = await fetchMembers(page, community);
-    const match = members.find((m) => m.name.toLowerCase() === tipperIdOrName.toLowerCase());
-    if (!match) throw new Error(`Member "${tipperIdOrName}" not found. Use list_members to see available names.`);
-    tipperId = match.tipperId;
-    tippsaisonId = match.tippsaisonId;
-  }
-  if (!tippsaisonId) tippsaisonId = await discoverSaisonId(page, community);
-  let url = `${URL_BASE}/${encodeURIComponent(community)}/spielleiter/tippsnachtragen?tipperId=${encodeURIComponent(tipperId)}&tippsaisonId=${encodeURIComponent(tippsaisonId)}`;
-  if (matchday !== undefined) {
-    if (matchday < 1 || matchday > 34) throw new RangeError(`Matchday '${matchday}' is not valid, use 1-34.`);
-    url += `&spieltagIndex=${matchday}`;
-  }
+  const member = await resolveMember(page, community, tipperIdOrName);
+  const url = getTipsNachtragenUrl(community, member, matchday);
   const $ = await loadPage(page, url);
   const tbody = $('table#tippsnachtragenSpiele tbody');
   if (!tbody.length) throw new Error('No matches found on tippsnachtragen page.');
@@ -639,7 +664,7 @@ export async function placeBetsForMember(
   // Each row: col0=date, col1=home, col2=away, col3=inputs.
   // Input names look like spieltippNachtragenForms[<id>].heimTippString.
   const editable: EditableMatch[] = [];
-  tbody.find('tr.datarow').each((_, tr) => {
+  tbody.find('tr').each((_, tr) => {
     const cols = $(tr).find('td');
     if (cols.length < 4) return;
     const heimInput = $(tr).find('input[id$="_heimTippString"]');
@@ -691,10 +716,12 @@ export async function placeBetsForMember(
   return placed;
 }
 
-export async function fetchBonusQuestions(page: Page, community: string): Promise<BonusQuestion[]> {
-  const $ = await loadPage(page, `${URL_BASE}/${encodeURIComponent(community)}/tippabgabe?bonus=true`);
-  const content = $('#kicktipp-content');
-  const table = content.find('table#tippabgabeFragen');
+function parseBonusQuestions(
+  $: cheerio.CheerioAPI,
+  content: cheerio.Cheerio<any>,
+  tableSelector: string,
+): BonusQuestion[] {
+  const table = content.find(tableSelector);
   if (!table.length) return [];
   const tbody = table.find('tbody');
   if (!tbody.length) return [];
@@ -714,7 +741,7 @@ export async function fetchBonusQuestions(page: Page, community: string): Promis
       $(sel).find('option').each((___, opt) => {
         const value = $(opt).attr('value') || '';
         const text = $(opt).text().trim();
-        if (value !== '-1') options.push({ value, text });
+        if (value !== '-1' && value !== '-2' && text) options.push({ value, text });
         if ($(opt).attr('selected') !== undefined) selected = value;
       });
       selects.push({ name, options, selected });
@@ -725,12 +752,24 @@ export async function fetchBonusQuestions(page: Page, community: string): Promis
   return questions;
 }
 
-export async function placeBonusBets(page: Page, community: string, bets: string[], submit = true): Promise<PlacedBonusBet[]> {
-  const questions = await fetchBonusQuestions(page, community);
-  if (!questions.length) throw new Error('No editable bonus questions found.');
+export async function fetchBonusQuestions(page: Page, community: string): Promise<BonusQuestion[]> {
+  const $ = await loadPage(page, getBonusPredictUrl(community));
+  return parseBonusQuestions($, $('#kicktipp-content'), 'table#tippabgabeFragen');
+}
 
-  // Group by question
-  const argsByQuestion = new Map<string, string[]>();
+export async function fetchBonusQuestionsForMember(
+  page: Page,
+  community: string,
+  tipperIdOrName: string,
+  matchday?: number,
+): Promise<BonusQuestion[]> {
+  const member = await resolveMember(page, community, tipperIdOrName);
+  const $ = await loadPage(page, getTipsNachtragenUrl(community, member, matchday, true));
+  return parseBonusQuestions($, $('#kicktipp-content'), 'table#tippsnachtragenFragen');
+}
+
+function parseBonusBetArgs(bets: string[]): Map<string, { question: string; answers: string[] }> {
+  const argsByQuestion = new Map<string, { question: string; answers: string[] }>();
   for (const arg of bets) {
     const eqIdx = arg.lastIndexOf('=');
     if (eqIdx === -1) throw new Error(`Invalid bonus bet '${arg}'. Use format: "Question text=Answer"`);
@@ -738,27 +777,22 @@ export async function placeBonusBets(page: Page, community: string, bets: string
     const answer = arg.slice(eqIdx + 1).trim();
     if (!question || !answer) throw new Error(`Invalid bonus bet '${arg}'. Both question and answer required.`);
     const key = question.toLowerCase();
-    if (!argsByQuestion.has(key)) argsByQuestion.set(key, []);
-    argsByQuestion.get(key)!.push(answer);
+    if (!argsByQuestion.has(key)) argsByQuestion.set(key, { question, answers: [] });
+    argsByQuestion.get(key)!.answers.push(answer);
   }
+  return argsByQuestion;
+}
 
+async function applyBonusBets(page: Page, questions: BonusQuestion[], bets: string[]): Promise<PlacedBonusBet[]> {
+  if (!questions.length) throw new Error('No editable bonus questions found.');
   const placed: PlacedBonusBet[] = [];
 
-  for (const [, answers] of argsByQuestion) {
-    const q = questions.find((qq) => qq.question.toLowerCase() === answers[0].toLowerCase()) ??
-      questions.find((qq) => {
-        // Find by the original question text from args
-        for (const arg of bets) {
-          const eqIdx = arg.lastIndexOf('=');
-          const qText = arg.slice(0, eqIdx).trim();
-          if (qq.question.toLowerCase() === qText.toLowerCase()) return true;
-        }
-        return false;
-      });
+  for (const { question, answers } of parseBonusBetArgs(bets).values()) {
+    const q = questions.find((qq) => qq.question.toLowerCase() === question.toLowerCase());
 
     if (!q) {
       const available = questions.map((qq) => qq.question).join(', ');
-      throw new Error(`No bonus question found matching: "${answers[0]}". Available: ${available}`);
+      throw new Error(`No bonus question found matching: "${question}". Available: ${available}`);
     }
 
     if (answers.length > q.selects.length) {
@@ -775,6 +809,36 @@ export async function placeBonusBets(page: Page, community: string, bets: string
       placed.push({ question: q.question, answer: option.text });
     }
   }
+
+  return placed;
+}
+
+export async function placeBonusBets(page: Page, community: string, bets: string[], submit = true): Promise<PlacedBonusBet[]> {
+  const questions = await fetchBonusQuestions(page, community);
+  const placed = await applyBonusBets(page, questions, bets);
+
+  if (submit) {
+    await Promise.all([
+      page.waitForNavigation(),
+      page.click('button[name="submitbutton"]'),
+    ]);
+  }
+
+  return placed;
+}
+
+export async function placeBonusBetsForMember(
+  page: Page,
+  community: string,
+  tipperIdOrName: string,
+  bets: string[],
+  matchday?: number,
+  submit = true,
+): Promise<PlacedBonusBet[]> {
+  const member = await resolveMember(page, community, tipperIdOrName);
+  const $ = await loadPage(page, getTipsNachtragenUrl(community, member, matchday, true));
+  const questions = parseBonusQuestions($, $('#kicktipp-content'), 'table#tippsnachtragenFragen');
+  const placed = await applyBonusBets(page, questions, bets);
 
   if (submit) {
     await Promise.all([

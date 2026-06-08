@@ -3,8 +3,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { Browser, Page, BrowserContext } from 'playwright';
-import { launchBrowser } from './browser.js';
+import { Page, launchBrowser } from './browser.js';
 import { saveCommunity, savePlayer, loadCommunity, loadPlayer, hasCredentials } from './config.js';
 import { requestContext } from './request-context.js';
 import { getSessionPage, invalidateSession, isAuthError } from './session-pool.js';
@@ -20,21 +19,21 @@ import {
   fetchCommunities,
   fetchPlayers,
   fetchBonusQuestions,
+  fetchBonusQuestionsForMember,
   placeBets,
   placeBonusBets,
+  placeBonusBetsForMember,
   fetchMembers,
   placeBetsForMember,
   OVERVIEW_VIEW_OPTIONS,
 } from './core.js';
 
-// ── Persistent browser session ─────────────────────────────────────
+// ── Persistent Kicktipp session ────────────────────────────────────
 
-let browserInstance: Browser | null = null;
 let pageInstance: Page | null = null;
-let contextInstance: BrowserContext | null = null;
 
 // Wraps a tool body so that if the kicktipp session has gone stale (cached
-// browser context still holds an expired cookie), we evict and retry once
+// cookie jar still holds an expired cookie), we evict and retry once
 // before surfacing the error.
 async function withFreshSession<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -63,18 +62,14 @@ async function getPage(): Promise<Page> {
       await pageInstance.evaluate(() => true);
       return pageInstance;
     } catch {
-      browserInstance = null;
       pageInstance = null;
-      contextInstance = null;
     }
   }
   if (!hasCredentials()) {
     throw new Error('No credentials found. Set KICKTIPP_EMAIL and KICKTIPP_PASSWORD env vars in the MCP server config, or run `kicktipp set-community` in a terminal.');
   }
-  const { browser, page, context } = await launchBrowser();
-  browserInstance = browser;
+  const { page } = await launchBrowser();
   pageInstance = page;
-  contextInstance = context;
   return page;
 }
 
@@ -295,12 +290,27 @@ mutatingTool(
 
 tool(
   'list_members',
-  'ADMIN ONLY: List all members of the community with their tipperId and status (Dummy/active). Use this to find a member by name and look up their tipperId for place_bets_for_member. Requires the logged-in user to be a Spielleiter (admin) of the community.',
+  'ADMIN ONLY: List all members of the community with their tipperId and status (Dummy/active). Use this to find a member by name and look up their tipperId for place_bets_for_member or place_bonus_bets_for_member. Requires the logged-in user to be a Spielleiter (admin) of the community.',
   {},
   async () => {
     const page = await getPage();
     const community = await resolveCommunity(page);
     const data = await fetchMembers(page, community);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+tool(
+  'get_bonus_questions_for_member',
+  'ADMIN ONLY: Get available bonus questions with options and current selections for another member via Tipps nachtragen. Use list_members to find the tipperId or pass the exact member name.',
+  {
+    tipperId: z.string().describe('Numeric tipperId OR member name (resolved via list_members). E.g. "77977722" or "sonnet-4-6".'),
+    matchday: z.number().int().min(1).max(34).optional().describe('Matchday (1-34). Omit for current/default bonus page.'),
+  },
+  async ({ tipperId, matchday }) => {
+    const page = await getPage();
+    const community = await resolveCommunity(page);
+    const data = await fetchBonusQuestionsForMember(page, community, tipperId, matchday);
     return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
   },
 );
@@ -318,6 +328,23 @@ mutatingTool(
     const page = await getPage();
     const community = await resolveCommunity(page);
     const placed = await placeBetsForMember(page, community, tipperId, bets, matchday, !dry_run);
+    return { content: [{ type: 'text', text: JSON.stringify({ success: !dry_run, dry_run: !!dry_run, tipperId, placed }, null, 2) }] };
+  },
+);
+
+mutatingTool(
+  'place_bonus_bets_for_member',
+  'ADMIN ONLY: Place bonus question answers on behalf of another member via Tipps nachtragen. DESTRUCTIVE: submits real bonus bets. Use dry_run=true to preview without submitting. Use get_bonus_questions_for_member for exact question text and options. Format each as "Question text=Answer".',
+  {
+    tipperId: z.string().describe('Numeric tipperId OR member name (resolved via list_members). E.g. "77977722" or "sonnet-4-6".'),
+    bets: z.array(z.string()).min(1).describe('Bonus bets in format "Question text=Answer". Repeat the same question for multi-select slots, e.g. ["Wer erreicht das Halbfinale?=Deutschland", "Wer erreicht das Halbfinale?=Brasilien"].'),
+    matchday: z.number().int().min(1).max(34).optional().describe('Matchday (1-34). Omit for current/default bonus page.'),
+    dry_run: z.boolean().optional().describe('If true, validate and return what would be placed without submitting.'),
+  },
+  async ({ tipperId, bets, matchday, dry_run }) => {
+    const page = await getPage();
+    const community = await resolveCommunity(page);
+    const placed = await placeBonusBetsForMember(page, community, tipperId, bets, matchday, !dry_run);
     return { content: [{ type: 'text', text: JSON.stringify({ success: !dry_run, dry_run: !!dry_run, tipperId, placed }, null, 2) }] };
   },
 );

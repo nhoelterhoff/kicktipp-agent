@@ -3,6 +3,7 @@
 import http from 'http';
 import { randomUUID } from 'crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { AUTH_CONNECTION_DESCRIPTION, AUTH_HEADER_HINT, AUTH_VALUE_EXAMPLE, AUTH_VALUE_FORMAT } from './auth-description.js';
 import { createServer } from './server.js';
 import { requestContext, type RequestContext } from './request-context.js';
 
@@ -83,7 +84,10 @@ const httpServer = http.createServer(async (req, res) => {
     });
     res.end(JSON.stringify({
       error: 'invalid_or_missing_token',
-      hint: 'Authorization: Bearer community,player,email,password (player may be empty)',
+      hint: AUTH_HEADER_HINT,
+      auth_description: AUTH_CONNECTION_DESCRIPTION,
+      auth_value_format: AUTH_VALUE_FORMAT,
+      example: AUTH_VALUE_EXAMPLE,
     }));
     return;
   }

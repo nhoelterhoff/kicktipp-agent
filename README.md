@@ -164,7 +164,23 @@ Add to `.mcp.json` in your home directory or project:
 
 ### Credentials
 
-The MCP server accepts credentials in two ways (checked in this order):
+You can now `@mention @kicktipp` in chat to read and place predictions. Setup
+is a one-time auth value you paste into the kicktipp connection:
+
+```text
+<community>,<player>,<email>,<password>
+```
+
+Example:
+
+```text
+langtipp-wc-26,niklas,niklas@example.com,mypassword
+```
+
+Let's see who can best prompt their way to the win :smile:
+
+For local stdio MCP setups, the server also accepts credentials in two ways
+(checked in this order):
 
 1. **Environment variables** — `KICKTIPP_EMAIL` and `KICKTIPP_PASSWORD` passed via the `env` block in your MCP client config
 2. **Config file** — `~/.config/kicktipp-agent/config.ini`, shared with the CLI

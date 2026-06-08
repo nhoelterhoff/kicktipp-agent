@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { Page, launchBrowser } from './browser.js';
+import { AUTH_CONNECTION_DESCRIPTION, AUTH_VALUE_FORMAT } from './auth-description.js';
 import { saveCommunity, savePlayer, loadCommunity, loadPlayer, hasCredentials } from './config.js';
 import { requestContext } from './request-context.js';
 import { getSessionPage, invalidateSession, isAuthError } from './session-pool.js';
@@ -75,10 +76,16 @@ async function getPage(): Promise<Page> {
 
 // ── MCP Server ─────────────────────────────────────────────────────
 
+const SERVER_INSTRUCTIONS = [
+  'kicktipp football prediction game.',
+  AUTH_CONNECTION_DESCRIPTION,
+  'IMPORTANT: Call get_status first to check if credentials and a community are configured. If credentials are missing or invalid, the operator needs to provide them (env vars for stdio mode, Authorization header for HTTP mode). If only the community is missing, call get_communities then set_community.',
+].join('\n\n');
+
 export function createServer(): McpServer {
 const server = new McpServer(
   { name: 'kicktipp', version: '1.0.0' },
-  { instructions: 'kicktipp.com football prediction game. IMPORTANT: Call get_status first to check if credentials and a community are configured. If credentials are missing or invalid, the operator needs to provide them (env vars for stdio mode, Authorization header for HTTP mode). If only the community is missing, call get_communities then set_community.' },
+  { instructions: SERVER_INSTRUCTIONS },
 );
 
 // Wrap server.tool so read-only handlers auto-retry once if the cached
@@ -97,9 +104,10 @@ tool(
   'Check current configuration. Call this first to see if a community and player are set. Most tools require a community. Use set_community and set_player if not configured.',
   {},
   async () => {
-    const credentials = hasCredentials();
-    const community = loadCommunity();
-    const player = loadPlayer();
+    const ctx = requestContext.getStore();
+    const credentials = !!(ctx?.email && ctx?.password) || hasCredentials();
+    const community = ctx?.community || loadCommunity();
+    const player = ctx?.player || loadPlayer();
     return {
       content: [{
         type: 'text',
@@ -109,7 +117,7 @@ tool(
           player: player || null,
           setup_needed: !credentials || !community,
           setup_instructions: !credentials
-            ? 'No credentials found. Set KICKTIPP_EMAIL and KICKTIPP_PASSWORD env vars in the MCP server config, or run `kicktipp set-community` in a terminal.'
+            ? `No credentials found. For hosted MCP, paste one auth value into the kicktipp connection using ${AUTH_VALUE_FORMAT}. For stdio mode, set KICKTIPP_EMAIL and KICKTIPP_PASSWORD env vars in the MCP server config, or run \`kicktipp set-community\` in a terminal.`
             : !community
               ? 'No community set. Call get_communities then set_community.'
               : null,

@@ -98,6 +98,31 @@ kicktipp bet --bonus "Who will win the league?=FC Bayern München"
 
 The MCP server exposes the same functionality as the CLI through the [Model Context Protocol](https://modelcontextprotocol.io), allowing AI assistants like Claude to interact with kicktipp.com on your behalf.
 
+### Default MCP interaction
+
+Once the kicktipp connection is configured, use it directly in chat by mentioning
+`@kicktipp` and asking for what you need:
+
+```text
+@kicktipp show today's matches
+@kicktipp show my bets for matchday 3
+@kicktipp place Bayern vs Dortmund=2:1 as a dry run
+@kicktipp place my bonus answer "Who will win the league?=FC Bayern München"
+```
+
+The agent should call `get_status` first. For hosted MCP, the one-time auth value
+already contains the community, player, email, and password, so normal usage does
+not require separate setup tools. For local stdio MCP, `get_status` may ask the
+agent to call `get_communities`, `set_community`, `get_players`, or `set_player`
+if those values are not stored yet.
+
+Read-only tools can fetch matches, schedules, leaderboards, rules, tables, current
+bets, and bonus questions. Mutating tools place real predictions, so use
+`dry_run=true` first when you want the agent to validate the request before
+submitting it. Admin tools such as `list_members`, `place_bets_for_member`, and
+`place_bonus_bets_for_member` only work when the authenticated user is a
+Spielleiter for the community.
+
 ### Available tools
 
 | Tool | Description |
@@ -164,8 +189,8 @@ Add to `.mcp.json` in your home directory or project:
 
 ### Credentials
 
-You can now `@mention @kicktipp` in chat to read and place predictions. Setup
-is a one-time auth value you paste into the kicktipp connection:
+For hosted MCP, setup is a one-time auth value you paste into the kicktipp
+connection:
 
 ```text
 <community>,<player>,<email>,<password>
@@ -174,10 +199,8 @@ is a one-time auth value you paste into the kicktipp connection:
 Example:
 
 ```text
-langtipp-wc-26,niklas,niklas@example.com,mypassword
+bundesliga-tipps,player-name,player@example.com,example-password
 ```
-
-Let's see who can best prompt their way to the win :smile:
 
 For local stdio MCP setups, the server also accepts credentials in two ways
 (checked in this order):

@@ -100,14 +100,14 @@ The MCP server exposes the same functionality as the CLI through the [Model Cont
 
 ### Default MCP interaction
 
-Once the kicktipp connection is configured, use it directly in chat by mentioning
-`@kicktipp` and asking for what you need:
+Once your MCP client is connected to the kicktipp server, ask your assistant for
+what you need in normal language:
 
 ```text
-@kicktipp show today's matches
-@kicktipp show my bets for matchday 3
-@kicktipp place Bayern vs Dortmund=2:1 as a dry run
-@kicktipp place my bonus answer "Who will win the league?=FC Bayern München"
+Show today's Kicktipp matches.
+Show my Kicktipp bets for matchday 3.
+Place Bayern vs Dortmund=2:1 as a Kicktipp dry run.
+Place my Kicktipp bonus answer "Who will win the league?=FC Bayern München".
 ```
 
 The agent should call `get_status` first. For hosted MCP, the one-time auth value
@@ -189,8 +189,8 @@ Add to `.mcp.json` in your home directory or project:
 
 ### Credentials
 
-For hosted MCP, setup is a one-time auth value you paste into the kicktipp
-connection:
+For hosted HTTP MCP, setup is a one-time bearer auth value that your MCP client
+sends with requests to the server:
 
 ```text
 <community>,<player>,<email>,<password>

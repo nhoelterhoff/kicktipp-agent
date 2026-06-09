@@ -117,7 +117,7 @@ tool(
           player: player || null,
           setup_needed: !credentials || !community,
           setup_instructions: !credentials
-            ? `No credentials found. For hosted MCP, paste one auth value into the kicktipp connection using ${AUTH_VALUE_FORMAT}. For stdio mode, set KICKTIPP_EMAIL and KICKTIPP_PASSWORD env vars in the MCP server config, or run \`kicktipp set-community\` in a terminal.`
+            ? `No credentials found. For hosted HTTP MCP, provide an Authorization bearer value using ${AUTH_VALUE_FORMAT}. For stdio mode, set KICKTIPP_EMAIL and KICKTIPP_PASSWORD env vars in the MCP server config, or run \`kicktipp set-community\` in a terminal.`
             : !community
               ? 'No community set. Call get_communities then set_community.'
               : null,

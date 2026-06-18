@@ -93,6 +93,13 @@ export interface BetMatch {
   odds: { home: string; draw: string; away: string };
 }
 
+export interface BettingQuoteMatch {
+  date: string;
+  home: string;
+  away: string;
+  odds: { home: string; draw: string; away: string };
+}
+
 export interface ScheduleMatch {
   date: string;
   home: string;
@@ -120,6 +127,78 @@ export interface LeaderboardData {
   matches?: ScheduleMatch[];
   bonusQuestions?: BonusQuestionEntry[];
   rankings: RankingEntry[];
+}
+
+export interface CurrentResultsOptions {
+  matchday?: number;
+  includeBets?: boolean;
+  includeOverview?: boolean;
+  includeTable?: boolean;
+}
+
+export interface CurrentResultsData {
+  community: string;
+  generatedAt: string;
+  matchday: number | null;
+  summary: {
+    scheduledMatches: number;
+    completedMatches: number;
+    rankedPlayers: number;
+    currentPlayer: RankingEntry | null;
+  };
+  currentMatchday: LeaderboardData;
+  currentBets?: {
+    title: string;
+    matches: BetMatch[];
+  };
+  seasonOverview?: OverviewData;
+  leagueTable?: {
+    label: string;
+    teams: TableTeam[];
+  };
+}
+
+export interface MatchPrediction {
+  matchIndex: number;
+  date: string;
+  home: string;
+  away: string;
+  result: string;
+  prediction: string | null;
+  points: string;
+  scored: boolean | null;
+}
+
+export interface OtherPredictionsPlayer {
+  participantId?: string;
+  position: string;
+  positionChange: {
+    direction: 'up' | 'down' | 'same' | null;
+    value: string;
+  };
+  name: string;
+  predictions: MatchPrediction[];
+  matchdayPoints: string;
+  bonus: string;
+  wins: string;
+  total: string;
+  isCurrentPlayer: boolean;
+}
+
+export interface OtherPredictionsData {
+  community: string;
+  generatedAt: string;
+  title: string;
+  matchday: number | null;
+  matches: ScheduleMatch[];
+  players: OtherPredictionsPlayer[];
+  pagination: {
+    requestedOffset: number;
+    requestedLimit: number;
+    returnedPlayers: number;
+    nextOffset: number | null;
+    hasMore: boolean;
+  };
 }
 
 export interface OverviewPlayer {
@@ -279,6 +358,27 @@ export async function fetchBets(page: Page, community: string, matchday?: number
   return { title, matches };
 }
 
+export async function fetchBettingQuotes(page: Page, community: string, matchday?: number): Promise<{ title: string; matches: BettingQuoteMatch[] }> {
+  const $ = await loadPage(page, getPredictUrl(community, matchday));
+  const content = $('#kicktipp-content');
+  const title = content.find('div.pagetitle').text().trim();
+  const tbody = content.find('tbody');
+  if (!tbody.length) return { title, matches: [] };
+
+  const matches: BettingQuoteMatch[] = [];
+  tbody.children('tr').each((_, tr) => {
+    const cols = $(tr).children('td');
+    if (cols.length < 5) return;
+    const date = $(cols[0]).text().trim();
+    const home = $(cols[1]).text().trim();
+    const away = $(cols[2]).text().trim();
+    const [rateHome, rateDraw, rateAway] = parseOdds($, cols[4]);
+    matches.push({ date, home, away, odds: { home: rateHome, draw: rateDraw, away: rateAway } });
+  });
+
+  return { title, matches };
+}
+
 export async function fetchSchedule(page: Page, community: string, matchday?: number): Promise<{ title: string; matches: ScheduleMatch[] }> {
   const $ = await loadPage(page, getScheduleUrl(community, matchday));
   const content = $('#kicktipp-content');
@@ -310,6 +410,28 @@ export async function fetchSchedule(page: Page, community: string, matchday?: nu
   return { title, matches };
 }
 
+function parseLeaderboardMatches($: cheerio.CheerioAPI, content: cheerio.Cheerio<any>): ScheduleMatch[] | undefined {
+  const matchesTable = content.find('table#spielplanSpiele');
+  if (!matchesTable.length) return undefined;
+
+  const matches: ScheduleMatch[] = [];
+  matchesTable.find('tbody tr').each((_, tr) => {
+    const cols = $(tr).children('td');
+    if (cols.length < 4) return;
+    const date = $(cols[0]).text().trim();
+    const home = $(cols[1]).text().trim();
+    const away = $(cols[2]).text().trim();
+    const resultSpan = $(cols[3]).find('span.kicktipp-ergebnis');
+    let result = '-:-';
+    if (resultSpan.length) {
+      result = `${resultSpan.find('span.kicktipp-heim').text().trim()}:${resultSpan.find('span.kicktipp-gast').text().trim()}`;
+    }
+    matches.push({ date, home, away, result });
+  });
+
+  return matches;
+}
+
 export async function fetchLeaderboard(page: Page, community: string, matchday?: number, bonus = false): Promise<LeaderboardData> {
   const $ = await loadPage(page, getLeaderboardUrl(community, matchday, bonus));
   const content = $('#kicktipp-content');
@@ -319,23 +441,7 @@ export async function fetchLeaderboard(page: Page, community: string, matchday?:
   // Matches (non-bonus only)
   let matches: ScheduleMatch[] | undefined;
   if (!bonus) {
-    const matchesTable = content.find('table#spielplanSpiele');
-    if (matchesTable.length) {
-      matches = [];
-      matchesTable.find('tbody tr').each((_, tr) => {
-        const cols = $(tr).children('td');
-        if (cols.length < 4) return;
-        const date = $(cols[0]).text().trim();
-        const home = $(cols[1]).text().trim();
-        const away = $(cols[2]).text().trim();
-        const resultSpan = $(cols[3]).find('span.kicktipp-ergebnis');
-        let result = '-:-';
-        if (resultSpan.length) {
-          result = `${resultSpan.find('span.kicktipp-heim').text().trim()}:${resultSpan.find('span.kicktipp-gast').text().trim()}`;
-        }
-        matches!.push({ date, home, away, result });
-      });
-    }
+    matches = parseLeaderboardMatches($, content);
   }
 
   // Bonus questions (bonus only)
@@ -377,6 +483,206 @@ export async function fetchLeaderboard(page: Page, community: string, matchday?:
   });
 
   return { title, matches, bonusQuestions, rankings };
+}
+
+function getLeaderboardPageUrl(community: string, matchday: number | undefined, offset: number): string {
+  const url = new URL(getLeaderboardUrl(community, matchday));
+  if (offset > 0) url.searchParams.set('offset', String(offset));
+  return url.toString();
+}
+
+function parsePositionChange($: cheerio.CheerioAPI, row: cheerio.Cheerio<any>): OtherPredictionsPlayer['positionChange'] {
+  const cell = row.find('td.positionsdifferenz');
+  if (!cell.length) return { direction: null, value: '' };
+  const value = cell.find('.d1').text().trim() || cell.text().trim();
+  let direction: OtherPredictionsPlayer['positionChange']['direction'] = null;
+  if (cell.hasClass('position-icon-up')) direction = 'up';
+  else if (cell.hasClass('position-icon-down')) direction = 'down';
+  else if (value) direction = 'same';
+  return { direction, value };
+}
+
+function parsePredictionText($: cheerio.CheerioAPI, cell: cheerio.Cheerio<any>): string | null {
+  const withoutPoints = cell.clone();
+  withoutPoints.find('sub.p').remove();
+  const prediction = withoutPoints.text().trim();
+  return prediction || null;
+}
+
+function parseOtherPredictionPlayers(
+  $: cheerio.CheerioAPI,
+  content: cheerio.Cheerio<any>,
+  matches: ScheduleMatch[],
+  includeCurrentPlayer: boolean,
+): OtherPredictionsPlayer[] {
+  const savedPlayer = loadPlayer();
+  const players: OtherPredictionsPlayer[] = [];
+
+  content.find('table#ranking tbody tr').each((_, tr) => {
+    const row = $(tr);
+    const posTd = row.find('td.position');
+    const nameDiv = row.find('div.mg_name');
+    if (!posTd.length || !nameDiv.length) return;
+
+    const name = nameDiv.text().trim();
+    const isCurrentPlayer = !!savedPlayer && name === savedPlayer;
+    if (isCurrentPlayer && !includeCurrentPlayer) return;
+
+    const predictions: MatchPrediction[] = [];
+    row.find('td.ereignis').each((matchIndex, td) => {
+      const cell = $(td);
+      const match = matches[matchIndex];
+      predictions.push({
+        matchIndex,
+        date: match?.date || '',
+        home: match?.home || '',
+        away: match?.away || '',
+        result: match?.result || '',
+        prediction: parsePredictionText($, cell),
+        points: cell.find('sub.p').text().trim(),
+        scored: cell.hasClass('t') ? true : cell.hasClass('f') ? false : null,
+      });
+    });
+
+    players.push({
+      participantId: row.attr('data-teilnehmer-id'),
+      position: posTd.text().trim(),
+      positionChange: parsePositionChange($, row),
+      name,
+      predictions,
+      matchdayPoints: row.find('td.spieltagspunkte').text().trim(),
+      bonus: row.find('td.bonus').text().trim(),
+      wins: row.find('td.siege').text().trim(),
+      total: row.find('td.gesamtpunkte').text().trim(),
+      isCurrentPlayer,
+    });
+  });
+
+  return players;
+}
+
+function parseNextOffset($: cheerio.CheerioAPI, pageUrl: string): number | null {
+  const href = $('tr.blaettern div.next a.rankingReload').attr('href') ||
+    $('div.next a.rankingReload').last().attr('href') ||
+    $('a.rankingReload').last().attr('href');
+  if (!href) return null;
+  const nextUrl = new URL(href, pageUrl);
+  const offset = Number(nextUrl.searchParams.get('offset'));
+  return Number.isInteger(offset) && offset >= 0 ? offset : null;
+}
+
+export async function fetchOtherPredictions(
+  page: Page,
+  community: string,
+  matchday?: number,
+  options: {
+    limit?: number;
+    offset?: number;
+    includeCurrentPlayer?: boolean;
+  } = {},
+): Promise<OtherPredictionsData> {
+  const requestedLimit = options.limit ?? 100;
+  const requestedOffset = options.offset ?? 0;
+  const includeCurrentPlayer = options.includeCurrentPlayer ?? false;
+  const players: OtherPredictionsPlayer[] = [];
+
+  let title = '';
+  let matches: ScheduleMatch[] = [];
+  let currentOffset = requestedOffset;
+  let nextOffset: number | null = requestedOffset;
+
+  while (nextOffset !== null && players.length < requestedLimit) {
+    currentOffset = nextOffset;
+    const pageUrl = getLeaderboardPageUrl(community, matchday, currentOffset);
+    const $ = await loadPage(page, pageUrl);
+    const content = $('#kicktipp-content');
+
+    if (!title) title = content.find('div.pagetitle').text().trim();
+    if (!matches.length) matches = parseLeaderboardMatches($, content) || [];
+
+    const pagePlayers = parseOtherPredictionPlayers($, content, matches, true);
+    let consumedPagePlayers = 0;
+    for (const player of pagePlayers) {
+      consumedPagePlayers++;
+      if (player.isCurrentPlayer && !includeCurrentPlayer) continue;
+      players.push(player);
+      if (players.length >= requestedLimit) break;
+    }
+
+    if (players.length >= requestedLimit && consumedPagePlayers < pagePlayers.length) {
+      nextOffset = currentOffset + consumedPagePlayers;
+      break;
+    }
+
+    nextOffset = parseNextOffset($, page.url());
+    if (nextOffset === currentOffset || pagePlayers.length === 0) nextOffset = null;
+  }
+
+  return {
+    community,
+    generatedAt: new Date().toISOString(),
+    title,
+    matchday: matchday ?? parseMatchdayFromTitle(title),
+    matches,
+    players,
+    pagination: {
+      requestedOffset,
+      requestedLimit,
+      returnedPlayers: players.length,
+      nextOffset,
+      hasMore: nextOffset !== null,
+    },
+  };
+}
+
+function isRecordedResult(result: string): boolean {
+  return /^\d+\s*:\s*\d+$/.test(result.trim());
+}
+
+function parseMatchdayFromTitle(title: string): number | null {
+  const normalized = title.trim();
+  const leadingNumber = normalized.match(/\b(\d{1,2})\.\s*Spieltag\b/i);
+  if (leadingNumber) return Number(leadingNumber[1]);
+
+  const trailingNumber = normalized.match(/\b(?:Spieltag|Matchday)\s*(\d{1,2})\b/i);
+  if (trailingNumber) return Number(trailingNumber[1]);
+
+  return null;
+}
+
+export async function fetchCurrentResults(
+  page: Page,
+  community: string,
+  options: CurrentResultsOptions = {},
+): Promise<CurrentResultsData> {
+  const {
+    matchday,
+    includeBets = true,
+    includeOverview = true,
+    includeTable = true,
+  } = options;
+
+  const currentMatchday = await fetchLeaderboard(page, community, matchday);
+  const currentBets = includeBets ? await fetchBets(page, community, matchday) : undefined;
+  const seasonOverview = includeOverview ? await fetchOverview(page, community) : undefined;
+  const leagueTable = includeTable ? await fetchTable(page, community) : undefined;
+  const matches = currentMatchday.matches || [];
+
+  return {
+    community,
+    generatedAt: new Date().toISOString(),
+    matchday: matchday ?? parseMatchdayFromTitle(currentMatchday.title),
+    summary: {
+      scheduledMatches: matches.length,
+      completedMatches: matches.filter((m) => isRecordedResult(m.result)).length,
+      rankedPlayers: currentMatchday.rankings.length,
+      currentPlayer: currentMatchday.rankings.find((r) => r.isCurrentPlayer) || null,
+    },
+    currentMatchday,
+    currentBets,
+    seasonOverview,
+    leagueTable,
+  };
 }
 
 const OVERVIEW_VIEWS: Record<string, [string, string]> = {

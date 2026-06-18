@@ -116,12 +116,13 @@ not require separate setup tools. For local stdio MCP, `get_status` may ask the
 agent to call `get_communities`, `set_community`, `get_players`, or `set_player`
 if those values are not stored yet.
 
-Read-only tools can fetch matches, schedules, leaderboards, rules, tables, current
-bets, and bonus questions. Mutating tools place real predictions, so use
-`dry_run=true` first when you want the agent to validate the request before
-submitting it. Admin tools such as `list_members`, `place_bets_for_member`, and
-`place_bonus_bets_for_member` only work when the authenticated user is a
-Spielleiter for the community.
+Read-only tools can fetch matches, schedules, leaderboards, visible player
+predictions, betting quotes, rules, tables, current bets, bonus questions, and a
+bundled current-results snapshot for prediction context. Mutating tools place real
+predictions, so use `dry_run=true` first when you want the agent to validate the
+request before submitting it. Admin tools such as `list_members`,
+`place_bets_for_member`, and `place_bonus_bets_for_member` only work when the
+authenticated user is a Spielleiter for the community.
 
 ### Available tools
 
@@ -130,8 +131,11 @@ Spielleiter for the community.
 | `get_status` | Check if credentials and community are configured |
 | `get_today_matches` | Today's matches with bet status |
 | `get_bets` | Matches and current bets for a matchday |
+| `get_betting_quotes` | Home/draw/away betting quotes displayed in the Kicktipp UI |
 | `get_schedule` | Match schedule with results |
 | `get_leaderboard` | Player rankings for a matchday |
+| `get_current_results` | Bundled prediction context: match results, points, bets/odds, overview, and league table |
+| `get_other_predictions` | Other players' visible predictions for a matchday |
 | `get_overview` | Season overview across all matchdays |
 | `get_table` | League table (actual football standings) |
 | `get_rules` | Game rules and scoring system |

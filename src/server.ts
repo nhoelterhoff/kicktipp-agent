@@ -12,6 +12,9 @@ import {
   resolveCommunity,
   fetchTodayMatches,
   fetchBets,
+  fetchBettingQuotes,
+  fetchCurrentResults,
+  fetchOtherPredictions,
   fetchSchedule,
   fetchLeaderboard,
   fetchOverview,
@@ -152,6 +155,18 @@ tool(
 );
 
 tool(
+  'get_betting_quotes',
+  'Get the home/draw/away betting quotes displayed in the Kicktipp UI for each match in a matchday.',
+  { matchday: z.number().int().min(1).max(34).optional().describe('Matchday number (1-34). Omit for current matchday.') },
+  async ({ matchday }) => {
+    const page = await getPage();
+    const community = await resolveCommunity(page);
+    const data = await fetchBettingQuotes(page, community, matchday);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+tool(
   'get_schedule',
   'Get the match schedule with results for a matchday.',
   { matchday: z.number().int().min(1).max(34).optional().describe('Matchday number (1-34). Omit for current matchday.') },
@@ -174,6 +189,49 @@ tool(
     const page = await getPage();
     const community = await resolveCommunity(page);
     const data = await fetchLeaderboard(page, community, matchday, bonus);
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+tool(
+  'get_current_results',
+  'Get a bundled read-only context snapshot for new predictions: current matchday results and points, current bets/odds, season overview, and optionally the league table.',
+  {
+    matchday: z.number().int().min(1).max(34).optional().describe('Matchday number (1-34). Omit for Kicktipp\'s current matchday.'),
+    include_bets: z.boolean().optional().describe('Include current bets and odds for the matchday. Default: true.'),
+    include_overview: z.boolean().optional().describe('Include the season overview with per-matchday points and totals. Default: true.'),
+    include_table: z.boolean().optional().describe('Include the actual football league table. Default: true.'),
+  },
+  async ({ matchday, include_bets, include_overview, include_table }) => {
+    const page = await getPage();
+    const community = await resolveCommunity(page);
+    const data = await fetchCurrentResults(page, community, {
+      matchday,
+      includeBets: include_bets,
+      includeOverview: include_overview,
+      includeTable: include_table,
+    });
+    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
+  },
+);
+
+tool(
+  'get_other_predictions',
+  'Get other players\' visible predictions for a matchday from the Kicktipp tip overview. Kicktipp only reveals predictions that are visible on that page, usually after matches are locked or played.',
+  {
+    matchday: z.number().int().min(1).max(34).optional().describe('Matchday number (1-34). Omit for Kicktipp\'s current matchday.'),
+    limit: z.number().int().min(1).max(300).optional().describe('Maximum number of visible players to return. Default: 100.'),
+    offset: z.number().int().min(0).optional().describe('Start offset for paginated results. Use pagination.nextOffset to fetch the next page. Default: 0.'),
+    include_current_player: z.boolean().optional().describe('Include the configured current player in the result. Default: false.'),
+  },
+  async ({ matchday, limit, offset, include_current_player }) => {
+    const page = await getPage();
+    const community = await resolveCommunity(page);
+    const data = await fetchOtherPredictions(page, community, matchday, {
+      limit,
+      offset,
+      includeCurrentPlayer: include_current_player,
+    });
     return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
   },
 );
